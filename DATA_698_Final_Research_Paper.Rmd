@@ -1,0 +1,1515 @@
+---
+title: "DATA 698 -- County-Level Geographic Differences in Adult Obesity Prevalence
+  After Controlling for Known Risk Factors"
+author: "Bikash Bhowmik"
+date: "25-Nov-2026"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: hide
+    self_contained: true
+  word_document:
+    toc: true
+    toc_depth: 3
+    number_sections: false
+always_allow_html: true
+---
+
+
+<style>
+body { font-size: 17px; line-height: 1.5; }
+p, li { font-size: 17px; }
+h1 { font-size: 30px; }
+h2 { font-size: 25px; }
+h3 { font-size: 21px; }
+table { font-size: 14px; }
+pre, code { font-size: 13px; }
+</style>
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = knitr::is_html_output(),
+  message = FALSE,
+  warning = FALSE,
+  fig.align = "center",
+  fig.width = 8,
+  fig.height = 5,
+  out.width = "95%"
+)
+
+required_packages <- c(
+  "tidyverse", "janitor", "knitr", "kableExtra",
+  "broom", "car", "lmtest", "sandwich", "scales",
+  "stringi"
+)
+
+missing_packages <- required_packages[
+  !vapply(required_packages, requireNamespace, logical(1), quietly = TRUE)
+]
+
+if (length(missing_packages) > 0) {
+  stop(
+    "Install these packages before knitting: ",
+    paste(missing_packages, collapse = ", ")
+  )
+}
+
+invisible(lapply(required_packages, library, character.only = TRUE))
+
+options(scipen = 999)
+set.seed(698)
+```
+
+```{r precompute, include=FALSE}
+# Runs the data-building and modelling chunks once, up front, so the Abstract
+# can quote their results. The same chunks run again (with visible output)
+# in their normal positions below.
+for (lbl in c("data-import", "build-dataset", "model-estimation",
+              "model-comparison", "key-values")) {
+  eval(parse(text = paste(knitr::knit_code$get(lbl), collapse = "\n")),
+       envir = knitr::knit_global())
+}
+```
+
+# Abstract
+
+Adult obesity prevalence varies substantially across U.S. counties. This study asks how much of that variation is explained by measured behavioral, socioeconomic, food-related, and environmental characteristics, and whether geographic differences between states remain after those characteristics are taken into account. County-level data were assembled from Institute for Health Metrics and Evaluation (IHME) datasets and supporting public data files. The outcome is the average of IHME's 2009 male and female county obesity estimates (mean `r sprintf("%.2f", mean_ob)`%, SD `r sprintf("%.2f", sd_ob)` percentage points).
+
+A multiple linear regression model estimated using ordinary least squares (OLS) and a state fixed-effects model were fitted to `r format(n_model, big.mark = ",")` counties in `r n_states_mod` states, using `r length(available_predictors)` county-level predictors. The baseline model had an adjusted R-squared of `r sprintf("%.3f", adj0)` and a root mean squared error (RMSE) of `r sprintf("%.2f", rmse0)` percentage points. Adding state indicators raised the adjusted R-squared to `r sprintf("%.3f", adj1)` and lowered the RMSE to `r sprintf("%.2f", rmse1)` (HC3-robust joint F-test of the state indicators: F(`r f_df1`, `r f_df2`) = `r sprintf("%.2f", f_stat)`, p `r fmt_p(f_p)`). State indicators accounted for `r sprintf("%.1f", 100 * resid_share)`% of the residual variation left by the baseline model.
+
+Measured county characteristics therefore explain most, but not all, of the variation in county obesity, and systematic differences between states remain. Because the data are observational and aggregated to the county level, all results are statistical associations rather than causal effects. The outcome comes from modeled IHME estimates, and the predictors are drawn from different years.
+
+**Keywords:** adult obesity, county-level analysis, geographic variation, physical inactivity, socioeconomic factors, state fixed effects, spatial disparities
+
+# Introduction
+
+Adult obesity is an important public health issue in the United States (Hales et al., 2020) and varies considerably across geographic areas. While obesity is frequently examined at the national or state level, substantial differences can also occur among individual counties. Counties differ in their socioeconomic conditions, physical activity patterns, food security, behavioral characteristics, and environmental conditions.
+
+Many of the relationships between adult obesity and factors such as physical inactivity, socioeconomic conditions, and food-related conditions are already well established. Therefore, the primary purpose of this project is not simply to determine whether these known factors are associated with obesity. Instead, this study examines whether geographic differences among U.S. counties remain after accounting for these known county-level characteristics.
+
+The project investigates the extent to which county-level geographic variation in adult obesity prevalence can be explained by behavioral, socioeconomic, food-related, and environmental characteristics. The analysis first estimates the variation in obesity prevalence across counties and then examines whether substantial geographic differences remain after the known factors are included in a multivariable model.
+
+Because the study uses observational county-level data, the purpose is to identify statistical associations rather than causal relationships. The analysis does not determine whether living in a particular county causes obesity. Instead, it examines whether differences between counties remain statistically meaningful after controlling for measured county-level characteristics.
+
+##  Importance of the Study
+
+Understanding geographic differences in obesity is important because health outcomes can vary substantially across communities. Two counties may have similar levels of physical activity, socioeconomic resources, food insecurity, and environmental characteristics but still have different adult obesity prevalence. Examining this remaining geographic variation may provide additional information about health inequality at the county level.
+
+The study may also demonstrate how quantitative regression methods can be used to investigate geographic variation in a public-health outcome using data from multiple sources. Rather than focusing only on whether individual predictors are statistically significant, the analysis compares models, evaluates explained variation, examines effect sizes and uncertainty, and assesses regression assumptions.
+
+The findings are interpreted at the county level and are not used to make individual-level conclusions. Geographic differences that remain after adjustment may indicate that other county-level characteristics, spatial patterns, or unmeasured factors warrant further investigation.
+
+#  Literature Review
+
+##  Obesity and Geographic Differences
+
+Adult obesity is an established population-health concern (Hales et al., 2020), and its prevalence differs markedly across U.S. communities. Dwyer-Lindgren et al. (2013) produced model-based county-level estimates of physical activity and obesity for 2001-2011 and showed that prevalence varies widely between counties, including between counties in the same state. These estimates are the basis of the outcome used in this study. County-level analysis gives a finer geographic view than national or state summaries because neighboring communities can differ substantially in health and socioeconomic characteristics.
+
+The county-level perspective is particularly useful here because the research question is whether differences between geographic areas remain after accounting for measured risk factors. Rather than treating location only as a source of descriptive variation, this analysis tests whether geographic differences persist in adjusted models.
+
+##  Behavioral and Socioeconomic Characteristics
+
+Physical activity is a central behavioral characteristic in obesity research, and An et al. (2017) examined how environmental determinants of physical inactivity vary geographically across U.S. adults. IHME publishes county-level physical activity and obesity prevalence together (Dwyer-Lindgren et al., 2013), which allows both to be measured on a comparable county basis.
+
+Socioeconomic characteristics such as education, employment, and economic resources are also relevant. Counties with different socioeconomic conditions may have different access to health resources, food, and opportunities for physical activity, and longer unemployment has been linked to poorer health and health behavior (Janlert et al., 2015). Food insecurity is related to socioeconomic conditions and is therefore considered together with the other socioeconomic variables.
+
+These factors are treated primarily as known explanatory or control variables. The purpose is not to establish that these relationships exist, but to determine whether county-level geographic differences in obesity remain after accounting for them.
+
+##  Food-Related and Environmental Characteristics
+
+Ahern et al. (2011) found associations between county-level food environments and county-level health outcomes in a national study, which supports including food-related measures at the county level. Food insecurity is used here as a measure of food-related economic hardship. Sunlight exposure, which has been studied mainly in relation to vitamin D (Wacker & Holick, 2013), and the Environmental Quality Index are included as additional contextual measures. These variables are not assumed to represent every aspect of the local food or physical environment; they are included because they are available in the project's compiled public datasets.
+
+##  Geographic Variation and State-Level Differences
+
+State fixed effects represent systematic differences among states that are not captured by the measured explanatory variables. If the fixed-effects model improves model fit, this suggests that state membership provides additional explanatory information. State fixed effects do not, by themselves, identify local spatial dependence between neighboring counties. A separate spatial-autocorrelation analysis would be required to assess that question.
+
+##  Research Contribution
+
+The contribution of this study is its focus on the amount of county-level geographic variation that remains after adjustment for measured behavioral, socioeconomic, food-related, and environmental characteristics. The study does not claim that the selected predictors or the geographic approach are unprecedented. Rather, it applies a consistent county-level modeling framework to assess the additional explanatory value of state-level geographic indicators.
+
+# Research Questions  
+
+##  Primary Research Question
+
+To what extent do county-level geographic differences in adult obesity prevalence remain after controlling for known behavioral, socioeconomic, food-related, and environmental factors?
+
+##  Supporting Research Questions
+
+1. How much variation in adult obesity prevalence exists across U.S. counties before accounting for other county-level characteristics?
+
+2. To what extent do known behavioral, socioeconomic, food-related, and environmental characteristics explain differences in adult obesity prevalence across counties?
+
+3. After controlling for known county-level factors, do substantial differences in adult obesity prevalence remain across U.S. counties?
+
+4. Do state-level geographic indicators provide additional explanatory information about county-level adult obesity prevalence beyond the known risk factors?
+
+5. How does model performance change when state-level geographic indicators are included in addition to the known county-level risk factors?
+
+#  Data and Variables
+
+##  Data Sources
+
+The project repository contains the county-level source files used for this analysis. The files are read directly from the public GitHub repository so the analysis can be reproduced. The principal sources are IHME (Dwyer-Lindgren et al., 2013; IHME, n.d.-a, n.d.-b), the U.S. Census Bureau (2019), the USDA Economic Research Service (n.d.), the U.S. Environmental Protection Agency (n.d.), Feeding America (n.d.), and CDC environmental data (CDC, n.d.).
+
+The data files include:
+
+- `IHME_Obesity.csv`
+- `IHME_PhysicalActivity.csv`
+- `AlcoholConsumption.csv`
+- `Education.csv`
+- `Unemployment.csv`
+- `Wealth.csv`
+- `FoodInsecurity.csv`
+- `Sunlight.csv`
+- `EnvironmentalQualityIndex.csv`
+- `population.csv`
+
+The analysis uses only variables that can be identified and merged reliably from the available source files. The table below reports the source column mapped to each measure, and any optional measure that cannot be found is omitted. Missing variables are not replaced with unrelated measures.
+
+##  Outcome Variable
+
+The IHME obesity file contains separate male and female county prevalence estimates for 2009. For this analysis, the primary outcome is defined as the arithmetic mean of those two estimates:
+
+\[
+\text{Adult Obesity}_{i} =
+\frac{\text{Male Obesity}_{i,2009}+
+\text{Female Obesity}_{i,2009}}{2}
+\]
+
+This is an approximation, not a population-weighted combined prevalence estimate. A population-weighted overall estimate would require county-level male and female population weights that are aligned to the same year and definition. The outcome is expressed in percentage points.
+
+##  Explanatory Variables
+
+| Variable | Role | Measurement / interpretation |
+|:--|:--|:--|
+| Physical inactivity | Behavioral | 100 minus the average male/female sufficient physical activity prevalence (IHME, 2009) |
+| Heavy drinking (`alcohol_use`) | Behavioral | County-level heavy-drinking prevalence (IHME, 2012 column) |
+| Educational attainment | Socioeconomic | County-level college or bachelor's attainment measure |
+| Unemployment | Socioeconomic | County unemployment rate (2019 column) |
+| Median income (`median_income`) | Socioeconomic | County-level median household income from the repository's income file |
+| Food insecurity | Food-related | County-level food-insecurity measure |
+| Sunlight exposure | Environmental | Average daily sunlight, where available |
+| Environmental quality | Environmental | Environmental Quality Index, where available |
+| Population | Contextual | County population (2019 estimate); log population is used in a sensitivity specification |
+| State | Geographic | State indicator used for fixed effects |
+
+##  Geographic Data Integration
+
+County records are matched using standardized state and county names. The original proposal described five-digit FIPS codes. The repository files do not all expose a consistently named FIPS field, so the merge uses a normalized state-plus-county key. This avoids matching counties with the same name in different states, but it is not equivalent to a verified FIPS join.
+
+Some source files also contain state-level and national summary rows alongside the county rows. Because a state row can have the same normalized key as a county of the same name (for example, New York State and New York County), these rows are removed before merging. Rows with a state- or national-level FIPS code are dropped when a county-level FIPS column is available; otherwise, rows whose county name is identical to the state name (or is a national total) are dropped. The data-quality check below confirms the number of jurisdictions in the analysis sample.
+
+```{r data-import}
+repo_base <- "https://raw.githubusercontent.com/BIKASHBHOWMIK15/Data-698/main/"
+
+read_project_csv <- function(filename) {
+  url <- paste0(repo_base, filename)
+  tryCatch(
+    readr::read_csv(url, show_col_types = FALSE, name_repair = "unique"),
+    error = function(e) {
+      stop("Could not read ", filename, ". Check the repository filename and internet connection. Details: ",
+           conditionMessage(e))
+    }
+  )
+}
+
+normalize_state <- function(x) {
+  x <- stringr::str_squish(as.character(x))
+  x <- stringr::str_replace_all(x, "\\.", "")
+  abbr <- match(toupper(x), state.abb)
+  x[!is.na(abbr)] <- state.name[abbr[!is.na(abbr)]]
+  dplyr::case_when(
+    toupper(x) %in% c("DC", "DISTRICT OF COLUMBIA") ~ "District of Columbia",
+    TRUE ~ stringr::str_to_title(x)
+  )
+}
+
+normalize_county <- function(x) {
+  x <- as.character(x)
+  x <- stringi::stri_trans_general(x, "Latin-ASCII")
+  x <- stringr::str_to_lower(x)
+  x <- stringr::str_replace(x, ",.*$", "")
+  x <- stringr::str_remove(x, "\\s+(county|parish|borough|census area|municipality)$")
+  x <- stringr::str_replace_all(x, "[^a-z0-9]", "")
+  x
+}
+
+find_column <- function(data, patterns, required = TRUE, label = "variable") {
+  nm <- names(data)
+  hits <- unique(unlist(lapply(patterns, function(p) {
+    which(stringr::str_detect(nm, stringr::regex(p, ignore_case = TRUE)))
+  })))
+  if (length(hits) == 0) {
+    if (required) {
+      stop("Could not identify ", label, ". Available columns: ",
+           paste(nm, collapse = " | "))
+    }
+    return(NA_character_)
+  }
+  nm[hits[1]]
+}
+
+# Removes state-level and national summary rows so only counties remain.
+drop_non_county <- function(data) {
+  fips_col <- names(data)[stringr::str_detect(
+    names(data), stringr::regex("^fips", ignore_case = TRUE))][1]
+
+  fips <- if (!is.na(fips_col)) {
+    suppressWarnings(as.integer(readr::parse_number(as.character(data[[fips_col]]))))
+  } else {
+    rep(NA_integer_, nrow(data))
+  }
+
+  # Use FIPS only if it looks like a county-level code (mostly >= 1000)
+  use_fips <- sum(!is.na(fips)) > 0 && mean(fips[!is.na(fips)] >= 1000) > 0.8
+  if (!use_fips) fips <- rep(NA_integer_, nrow(data))
+
+  is_county_fips <- !is.na(fips) & fips >= 1000 & fips %% 1000 != 0
+  is_agg_fips    <- !is.na(fips) & !is_county_fips
+
+  county_lower <- stringr::str_to_lower(data$County)
+  name_equals_state <- county_lower == stringr::str_to_lower(data$State)
+  is_national <- county_lower %in% c("united states", "united states of america", "us", "usa")
+  no_state <- is.na(data$State) | data$State == ""
+
+  keep <- !is_agg_fips & !is_national & !no_state &
+    (!name_equals_state | is_county_fips)
+
+  data[keep, , drop = FALSE]
+}
+
+standardize_geo <- function(data, source_name = "dataset") {
+
+  original_names <- names(data)
+
+  # Normalize column names: remove spaces, underscores,
+  # punctuation, and convert to lowercase
+  normalized_names <- tolower(
+    gsub("[^a-zA-Z0-9]", "", original_names)
+  )
+
+  # Identify state column
+  state_idx <- which(
+    normalized_names %in% c("state", "stabr", "statename", "stname")
+  )[1]
+
+  # Identify county column
+  county_idx <- which(
+    normalized_names %in% c(
+      "county",
+      "location",
+      "areaname",
+      "countyname",
+      "countystate",
+      "ctyname"
+    )
+  )[1]
+
+  if (is.na(state_idx)) {
+    stop(
+      paste0(
+        "Could not identify state column in ",
+        source_name,
+        ". Available columns: ",
+        paste(original_names, collapse = " | ")
+      )
+    )
+  }
+
+  if (is.na(county_idx)) {
+    stop(
+      paste0(
+        "Could not identify county column in ",
+        source_name,
+        ". Available columns: ",
+        paste(original_names, collapse = " | ")
+      )
+    )
+  }
+
+  state_original <- original_names[state_idx]
+  county_original <- original_names[county_idx]
+
+  data %>%
+    mutate(
+      State = stringr::str_squish(as.character(.data[[state_original]])),
+      County = stringr::str_squish(as.character(.data[[county_original]]))
+    ) %>%
+    mutate(
+      County_key = paste(
+        normalize_state(State),
+        normalize_county(County),
+        sep = "|"
+      )
+    ) %>%
+    drop_non_county()
+}
+
+numeric_value <- function(x) {
+  readr::parse_number(as.character(x), na = c("", "NA", "N/A", "-", "—"))
+}
+
+make_one_variable <- function(filename, output_name, patterns,
+                              required = FALSE, transform = identity) {
+  raw <- read_project_csv(filename)
+  geo <- standardize_geo(raw, filename)
+  value_col <- find_column(
+    geo, patterns, required = required,
+    label = paste(output_name, "in", filename)
+  )
+
+  if (is.na(value_col)) {
+    message("Optional variable not found; omitted: ", output_name,
+            " (", filename, ")")
+    return(NULL)
+  }
+
+  message("Mapped ", output_name, " from ", filename, " column: ", value_col)
+
+  geo %>%
+    transmute(
+      State, County_key,
+      !!output_name := transform(numeric_value(.data[[value_col]]))
+    ) %>%
+    distinct(State, County_key, .keep_all = TRUE)
+}
+```
+
+##  Constructing the County-Level Analytical Dataset
+
+```{r build-dataset}
+# Outcome: average of the male and female 2009 obesity estimates.
+obesity_raw <- read_project_csv("IHME_Obesity.csv")
+obesity_geo <- standardize_geo(obesity_raw, "IHME_Obesity.csv")
+
+male_obesity_col <- find_column(
+  obesity_geo, "^Male obesity prevalence, 2009",
+  label = "male 2009 obesity prevalence"
+)
+female_obesity_col <- find_column(
+  obesity_geo, "^Female\\s+obesity\\s+prevalence,\\s*2009",
+  label = "female 2009 obesity prevalence"
+)
+
+obesity_data <- obesity_geo %>%
+  transmute(
+    State, County_key,
+    male_obesity_2009 = numeric_value(.data[[male_obesity_col]]),
+    female_obesity_2009 = numeric_value(.data[[female_obesity_col]]),
+    adult_obesity = rowMeans(
+      cbind(
+        numeric_value(.data[[male_obesity_col]]),
+        numeric_value(.data[[female_obesity_col]])
+      ),
+      na.rm = FALSE
+    )
+  ) %>%
+  mutate(
+    adult_obesity = ifelse(is.nan(adult_obesity), NA_real_, adult_obesity)
+  ) %>%
+  distinct(State, County_key, .keep_all = TRUE)
+
+# Physical inactivity: complement of sufficient physical activity prevalence.
+activity_raw <- read_project_csv("IHME_PhysicalActivity.csv")
+activity_geo <- standardize_geo(activity_raw, "IHME_PhysicalActivity.csv")
+
+male_activity_col <- find_column(
+  activity_geo,
+  "^Male\\s+sufficient\\s+physical\\s+activity\\s+prevalence,\\s*2009",
+  label = "male 2009 sufficient physical activity"
+)
+female_activity_col <- find_column(
+  activity_geo,
+  "^Female\\s+sufficient\\s+physical\\s+activity\\s+prevalence,\\s*2009",
+  label = "female 2009 sufficient physical activity"
+)
+
+activity_data <- activity_geo %>%
+  transmute(
+    State, County_key,
+    physical_inactivity = 100 - rowMeans(
+      cbind(
+        numeric_value(.data[[male_activity_col]]),
+        numeric_value(.data[[female_activity_col]])
+      ),
+      na.rm = FALSE
+    )
+  ) %>%
+  mutate(
+    physical_inactivity = ifelse(
+      is.nan(physical_inactivity), NA_real_, physical_inactivity
+    )
+  ) %>%
+  distinct(State, County_key, .keep_all = TRUE)
+
+# Additional candidate measures. A source variable is included only when a
+# corresponding county-level column can be identified.
+optional_sources <- list(
+  make_one_variable(
+    "AlcoholConsumption.csv", "alcohol_use",
+    c("^Hvy_2012$")
+  ),
+
+  make_one_variable(
+    "Education.csv", "college_education",
+    c("^College$", "bachelor", "college.*percent", "college.*rate")
+  ),
+
+  make_one_variable(
+    "Unemployment.csv", "unemployment",
+    c("^Unemployment_rate_2019$", "^Unemployment$", "unemployment.*2019")
+  ),
+
+  make_one_variable(
+    "Wealth.csv", "median_income",
+    c("^Income$", "median household income", "median.*income", "wealth")
+  ),
+
+  make_one_variable(
+    "FoodInsecurity.csv", "food_insecurity",
+    c("^FoodInsecurity$", "food insecurity.*(rate|percent|pct)?",
+      "food insecurity")
+  ),
+
+  make_one_variable(
+    "Sunlight.csv", "sunlight",
+    c("^Sun$", "Avg Daily Sunlight", "average_daily_sunlight",
+      "average daily sunlight")
+  ),
+
+  make_one_variable(
+    "EnvironmentalQualityIndex.csv", "environmental_quality",
+    c("^environmental_quality_index$")
+  ),
+
+  make_one_variable(
+    "population.csv", "population",
+    c("^Population$", "POPESTIMATE2019", "population.*2019")
+  )
+)
+
+optional_sources <- optional_sources[
+  !vapply(optional_sources, is.null, logical(1))
+]
+
+
+# Start with obesity outcome and physical inactivity.
+analysis_data <- obesity_data %>%
+  left_join(
+    activity_data %>% select(-State),
+    by = "County_key"
+  )
+
+# Merge optional datasets using County_key only.
+for (source_data in optional_sources) {
+
+  value_col <- setdiff(
+    names(source_data),
+    c("State", "County_key")
+  )
+
+  # Check for duplicate geographic keys.
+  if (anyDuplicated(source_data$County_key)) {
+    stop(
+      "Duplicate County_key found in: ",
+      paste(value_col, collapse = ", ")
+    )
+  }
+
+  analysis_data <- analysis_data %>%
+    left_join(
+      source_data %>%
+        select(County_key, all_of(value_col)),
+      by = "County_key"
+    )
+}
+
+# Calculate log population.
+analysis_data <- analysis_data %>%
+  mutate(
+    log_population = if ("population" %in% names(.)) {
+      ifelse(population > 0, log(population), NA_real_)
+    } else {
+      NA_real_
+    }
+  )
+
+# Keep counties with valid obesity outcomes.
+analysis_data <- analysis_data %>%
+  filter(is.finite(adult_obesity))
+
+
+# Verify the optional variables after merging.
+merge_verification <- tibble(
+  Variable = names(analysis_data),
+  Non_Missing = vapply(
+    analysis_data,
+    function(x) sum(!is.na(x)),
+    integer(1)
+  ),
+  Missing = vapply(
+    analysis_data,
+    function(x) sum(is.na(x)),
+    integer(1)
+  )
+) %>%
+  mutate(
+    Missing_Percent = round(
+      Missing / nrow(analysis_data) * 100, 2
+    )
+  )
+
+knitr::kable(
+  merge_verification,
+  digits = 2,
+  caption = "County-level data integration verification"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+
+# Merge diagnostics.
+merge_summary <- tibble(
+  Measure = c(
+    "Counties with obesity outcome",
+    "Counties with physical inactivity",
+    "Counties with missing physical inactivity"
+  ),
+  Count = c(
+    nrow(analysis_data),
+    sum(!is.na(analysis_data$physical_inactivity)),
+    sum(is.na(analysis_data$physical_inactivity))
+  )
+)
+
+knitr::kable(
+  merge_summary,
+  caption = "County-level data availability after merging"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+```
+
+##  Data Quality and Analysis Sample
+
+The number of counties available for each measure may differ because the source datasets may have different geographic coverage and missing values. The regression sample is therefore defined by the observations with complete data for the outcome and the predictors included in the final model. The sample sizes are reported in the Results, and not every model uses all U.S. counties.
+
+```{r data-quality}
+summary(analysis_data$adult_obesity)
+
+county_counts <- analysis_data %>%
+  summarise(
+    counties = n(),
+    states = n_distinct(State),
+    mean_obesity = mean(adult_obesity, na.rm = TRUE),
+    sd_obesity = sd(adult_obesity, na.rm = TRUE),
+    min_obesity = min(adult_obesity, na.rm = TRUE),
+    median_obesity = median(adult_obesity, na.rm = TRUE),
+    max_obesity = max(adult_obesity, na.rm = TRUE)
+  )
+
+knitr::kable(
+  county_counts,
+  digits = 2,
+  caption = "Summary of the county-level obesity outcome"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+```{r sample-check}
+n_states_all <- dplyr::n_distinct(analysis_data$State)
+cat("Rows in the analysis sample:", nrow(analysis_data), "\n")
+cat("Distinct states / jurisdictions:", n_states_all, "\n")
+if (n_states_all > 51) {
+  cat("CHECK: more than 50 states + DC found. Non-county rows may remain.\n")
+}
+
+analysis_data %>%
+  count(State, name = "Rows") %>%
+  arrange(Rows) %>%
+  head(6) %>%
+  knitr::kable(
+    caption = "Jurisdictions with the fewest rows in the analysis sample"
+  ) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+#  Methodology
+
+##  Exploratory Data Analysis
+
+Exploratory data analysis is used to describe the distribution of adult obesity prevalence and examine the relationships among the outcome and available explanatory variables. Descriptive statistics and visualizations are reviewed before fitting regression models.
+
+```{r obesity-distribution}
+ggplot(analysis_data, aes(x = adult_obesity)) +
+  geom_histogram(bins = 30, color = "white") +
+  labs(
+    title = "Distribution of County-Level Adult Obesity Prevalence",
+    x = "Adult obesity prevalence (%)",
+    y = "Number of counties"
+  ) +
+  theme_minimal()
+```
+
+```{r state-distribution}
+state_summary <- analysis_data %>%
+  group_by(State) %>%
+  summarise(
+    counties = n(),
+    mean_obesity = mean(adult_obesity, na.rm = TRUE),
+    median_obesity = median(adult_obesity, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_obesity))
+
+knitr::kable(
+  head(state_summary, 15),
+  digits = 2,
+  caption = "States with the highest mean county-level obesity prevalence (top 15)"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+state_extremes <- bind_rows(
+  state_summary %>%
+    slice_max(mean_obesity, n = 10) %>%
+    mutate(Group = "Highest"),
+
+  state_summary %>%
+    slice_min(mean_obesity, n = 10) %>%
+    mutate(Group = "Lowest")
+) %>%
+  arrange(mean_obesity) %>%
+  mutate(State = factor(State, levels = State))
+
+ggplot(state_extremes,
+       aes(x = State, y = mean_obesity, fill = Group)) +
+  geom_col(width = 0.7) +
+
+  # Display values on the bars
+  geom_text(
+    aes(label = sprintf("%.2f", mean_obesity)),
+    hjust = 1.2,
+    color = "white",
+    fontface = "bold",
+    size = 3.5
+  ) +
+
+  coord_flip() +
+  labs(
+    title = "States with the Highest and Lowest Mean County Obesity",
+    x = NULL,
+    y = "Mean County Obesity Prevalence (%)",
+    fill = "State Group"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold"),
+    legend.position = "bottom"
+  )
+```
+
+##  Correlation Analysis
+
+Pearson correlations are used as an exploratory measure of linear association among numeric variables. Correlation does not establish causation and does not account for other variables in the model.
+
+```{r correlation-analysis}
+corr_vars <- intersect(
+  c("adult_obesity", "physical_inactivity", "alcohol_use",
+    "college_education", "unemployment", "median_income",
+    "food_insecurity", "sunlight", "environmental_quality", "population"),
+  names(analysis_data)
+)
+
+numeric_data <- analysis_data %>%
+  select(all_of(corr_vars))
+
+correlation_matrix <- cor(
+  numeric_data,
+  use = "pairwise.complete.obs"
+)
+
+corrplot_available <- requireNamespace("corrplot", quietly = TRUE)
+
+if (corrplot_available) {
+  corrplot::corrplot(
+    correlation_matrix,
+    method = "color",
+    type = "upper",
+    tl.col = "black",
+    tl.cex = 0.75,
+    addCoef.col = "black",
+    number.cex = 0.6
+  )
+} else {
+  knitr::kable(
+    round(correlation_matrix, 2),
+    caption = "Pearson correlation matrix"
+  )
+}
+```
+
+Adult obesity is most strongly correlated with physical inactivity (r = `r sprintf("%.2f", correlation_matrix["adult_obesity", "physical_inactivity"])`), followed by college education (r = `r sprintf("%.2f", correlation_matrix["adult_obesity", "college_education"])`) and food insecurity (r = `r sprintf("%.2f", correlation_matrix["adult_obesity", "food_insecurity"])`). Several predictors are also correlated with one another, for example median income with food insecurity (r = `r sprintf("%.2f", correlation_matrix["median_income", "food_insecurity"])`) and with college education (r = `r sprintf("%.2f", correlation_matrix["median_income", "college_education"])`). This overlap is why multicollinearity is checked later with variance inflation factors.
+
+##  Multiple Linear Regression
+
+The baseline model uses adult obesity prevalence as the dependent variable and the available county-level explanatory variables as predictors. The model is specified using the predictors that are successfully identified in the repository and have sufficient non-missing observations.
+
+The general model is:
+
+\[
+Obesity_i = \beta_0 + \sum_{k=1}^{K}\beta_k X_{ki} + \epsilon_i
+\]
+
+where \(Obesity_i\) is the adult obesity prevalence measure for county \(i\), \(X_{ki}\) represents the measured county-level characteristics, and \(\epsilon_i\) is the error term.
+
+
+```{r model-estimation}
+candidate_predictors <- c(
+  "physical_inactivity",
+  "alcohol_use",
+  "college_education",
+  "unemployment",
+  "median_income",
+  "food_insecurity",
+  "sunlight",
+  "environmental_quality",
+  "population"
+)
+
+# Identify predictors available in the dataset
+existing_predictors <- intersect(
+  candidate_predictors,
+  names(analysis_data)
+)
+
+# Check predictor quality
+predictor_diagnostics <- purrr::map_dfr(
+  existing_predictors,
+  function(v) {
+
+    x <- analysis_data[[v]]
+
+    tibble(
+      Variable = v,
+      Non_Missing = sum(!is.na(x)),
+      Distinct_Values = dplyr::n_distinct(x, na.rm = TRUE),
+      Data_Type = class(x)[1]
+    )
+  }
+)
+
+knitr::kable(
+  predictor_diagnostics,
+  caption = "Regression predictor diagnostics"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+# Select usable numerical predictors
+available_predictors <- predictor_diagnostics %>%
+  filter(
+    Non_Missing >= 100,
+    Distinct_Values > 1,
+    Data_Type %in% c("numeric", "integer")
+  ) %>%
+  pull(Variable)
+
+cat("Usable predictors:",
+    paste(available_predictors, collapse = ", "))
+
+if (length(available_predictors) < 3) {
+  stop(
+    "Fewer than three usable predictors. ",
+    "Review the diagnostic table before continuing."
+  )
+}
+
+# Create complete-case regression dataset
+model_variables <- c(
+  "adult_obesity",
+  "State",
+  "County_key",
+  available_predictors
+)
+
+model_data <- analysis_data %>%
+  select(all_of(model_variables)) %>%
+  drop_na() %>%
+  mutate(State = factor(State))
+
+# Exclude District of Columbia because it has only one
+# county-equivalent observation and creates leverage = 1
+model_data <- model_data %>%
+  filter(State != "District of Columbia") %>%
+  mutate(State = droplevels(State))
+
+
+if (nrow(model_data) < 100) {
+  stop("Regression sample contains fewer than 100 counties.")
+}
+
+# Baseline OLS model
+baseline_formula <- as.formula(
+  paste(
+    "adult_obesity ~",
+    paste(available_predictors, collapse = " + ")
+  )
+)
+
+model_ols <- lm(
+  baseline_formula,
+  data = model_data
+)
+
+# State fixed-effects model
+state_formula <- as.formula(
+  paste(
+    "adult_obesity ~",
+    paste(available_predictors, collapse = " + "),
+    "+ State"
+  )
+)
+
+model_state <- lm(
+  state_formula,
+  data = model_data
+)
+
+cat("\nRegression sample:",
+    nrow(model_data), "counties")
+
+cat("\nStates represented:",
+    n_distinct(model_data$State))
+
+cat("\nBaseline adjusted R-squared:",
+    round(summary(model_ols)$adj.r.squared, 4))
+
+cat("\nState model adjusted R-squared:",
+    round(summary(model_state)$adj.r.squared, 4))
+
+
+```
+
+
+
+##  State Fixed-Effects Model
+
+The geographic model adds state indicators to the baseline regression:
+
+\[
+Obesity_{is} = \beta_0 + \sum_{k=1}^{K}\beta_k X_{kis} + \gamma_s + \epsilon_{is}
+\]
+
+where \(\gamma_s\) represents the state fixed effect. One state is treated as the reference category by the regression software.
+
+The state fixed-effects model tests whether state membership adds explanatory information after adjustment for the measured county-level variables. It does not establish that state location causes differences in obesity prevalence.
+
+##  Model Evaluation
+
+The models are compared using adjusted R-squared and RMSE. A joint F-test of the state indicators, computed with HC3 heteroscedasticity-robust standard errors, evaluates whether they collectively improve the in-sample fit (the sensitivity table later reports the classical nested-model F-test for comparison). These measures describe explanatory performance in the analysis sample and should not be confused with out-of-sample predictive validation.
+
+```{r model-comparison}
+rmse <- function(model) {
+  sqrt(mean(residuals(model)^2))
+}
+
+model_comparison <- tibble(
+  Model = c("Baseline OLS", "OLS with state fixed effects"),
+  Observations = c(nobs(model_ols), nobs(model_state)),
+  R_Squared = c(summary(model_ols)$r.squared,
+                summary(model_state)$r.squared),
+  Adjusted_R_Squared = c(summary(model_ols)$adj.r.squared,
+                         summary(model_state)$adj.r.squared),
+  RMSE = c(rmse(model_ols), rmse(model_state))
+)
+
+knitr::kable(
+  model_comparison,
+  digits = 4,
+  caption = "Comparison of baseline and state fixed-effects models"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+options(knitr.kable.NA = "")
+
+
+# Robust joint test of all state indicators using HC3 standard errors
+
+state_terms <- grep(
+  "^State",
+  names(coef(model_state)),
+  value = TRUE
+)
+
+robust_state_test <- car::linearHypothesis(
+  model_state,
+  state_terms,
+  vcov. = sandwich::vcovHC(model_state, type = "HC3"),
+  test = "F"
+)
+
+# Extract robust test statistics
+robust_f_stat <- robust_state_test[2, "F"]
+robust_f_p <- robust_state_test[2, "Pr(>F)"]
+robust_f_df1 <- length(state_terms)
+robust_f_df2 <- df.residual(model_state)
+
+robust_test_table <- tibble(
+  Test = "Joint test of state indicators (HC3 robust)",
+  `Numerator df` = robust_f_df1,
+  `Denominator df` = robust_f_df2,
+  `Robust F statistic` = robust_f_stat,
+  `p-value` = ifelse(
+    robust_f_p < 0.001,
+    "<0.001",
+    sprintf("%.3f", robust_f_p)
+  )
+)
+
+knitr::kable(
+  robust_test_table,
+  digits = 2,
+  caption = "HC3 robust joint test of state fixed effects"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+```
+
+```{r key-values, include=FALSE}
+# Summary values quoted in the Abstract, Results, and Discussion.
+fmt_p <- function(p) {
+  ifelse(p < 0.001, "< 0.001", paste0("= ", formatC(p, format = "f", digits = 3)))
+}
+
+
+# Model comparison and key values
+
+n_all         <- nrow(analysis_data)
+n_states_all  <- dplyr::n_distinct(analysis_data$State)
+n_model       <- nobs(model_state)
+n_states_mod  <- nlevels(model_data$State)
+
+mean_ob       <- mean(analysis_data$adult_obesity)
+sd_ob         <- sd(analysis_data$adult_obesity)
+
+adj0          <- summary(model_ols)$adj.r.squared
+adj1          <- summary(model_state)$adj.r.squared
+
+rmse0         <- rmse(model_ols)
+rmse1         <- rmse(model_state)
+
+# Robust joint test of state indicators (HC3)
+
+state_terms <- grep(
+  "^State",
+  names(coef(model_state)),
+  value = TRUE
+)
+
+robust_state_test <- car::linearHypothesis(
+  model_state,
+  state_terms,
+  vcov. = sandwich::vcovHC(model_state, type = "HC3"),
+  test = "F"
+)
+
+f_stat        <- robust_state_test[2, "F"]
+f_df1         <- length(state_terms)
+f_df2         <- df.residual(model_state)
+f_p           <- robust_state_test[2, "Pr(>F)"]
+
+# Proportion of baseline residual variation explained
+# by adding state indicators
+
+resid_share   <- 1 - deviance(model_state) / deviance(model_ols)
+
+
+# Which of the 50 states are absent from the analysis and regression samples
+states_missing_analysis <- setdiff(state.name, unique(as.character(analysis_data$State)))
+states_missing_model    <- setdiff(state.name, unique(as.character(model_data$State)))
+has_dc <- "District of Columbia" %in% unique(as.character(analysis_data$State))
+```
+
+The state fixed-effects model improves model fit compared with the baseline OLS model. Adjusted R-squared increases from `r sprintf("%.4f", adj0)` to `r sprintf("%.4f", adj1)`, while RMSE decreases from `r sprintf("%.4f", rmse0)` to `r sprintf("%.4f", rmse1)` percentage points. The HC3 robust joint test indicates that the state indicators are collectively statistically significant (F(`r f_df1`, `r f_df2`) = `r sprintf("%.2f", f_stat)`, p `r fmt_p(f_p)`). These findings suggest that meaningful state-level differences in county obesity prevalence remain after accounting for the measured explanatory variables.
+
+
+##  Regression Coefficients and Uncertainty
+
+Because counties within the same state are unlikely to be independent, the baseline model reports standard errors that are robust to heteroscedasticity and clustered by state (Cameron & Miller, 2015). The state fixed-effects model reports heteroscedasticity-consistent (HC3) standard errors (MacKinnon & White, 1985). Both are computed with the R package sandwich (Zeileis, 2004). Standardized coefficients (the change in obesity, in standard deviations of obesity, per one standard deviation of the predictor) are included so predictors measured in different units can be compared.
+
+```{r coefficient-results}
+pred_labels <- c(
+  physical_inactivity   = "Physical inactivity",
+  alcohol_use           = "Heavy drinking",
+  college_education     = "College education",
+  unemployment          = "Unemployment",
+  median_income         = "Median income",
+  food_insecurity       = "Food insecurity",
+  sunlight              = "Sunlight",
+  environmental_quality = "Environmental quality",
+  population            = "Population"
+)
+
+robust_table <- function(model, vcov_mat, data, outcome = "adult_obesity") {
+  ct <- lmtest::coeftest(model, vcov. = vcov_mat)
+  terms <- rownames(ct)
+  sd_x <- vapply(terms, function(v) {
+    if (v %in% names(data) && is.numeric(data[[v]])) sd(data[[v]]) else NA_real_
+  }, numeric(1))
+
+  tibble(
+    Term      = terms,
+    Estimate  = as.numeric(ct[, 1]),
+    Robust_SE = as.numeric(ct[, 2]),
+    p_value   = as.numeric(ct[, 4])
+  ) %>%
+    mutate(
+      CI_low   = Estimate - 1.96 * Robust_SE,
+      CI_high  = Estimate + 1.96 * Robust_SE,
+      Std_Beta = Estimate * as.numeric(sd_x) / sd(data[[outcome]])
+    )
+}
+
+show_coef <- function(tab, caption) {
+  # Significant-digit formatting so very small per-unit coefficients
+  # (income in dollars, population in persons, sunlight in kJ/m2) do not show as 0.000
+  fmt <- function(x) formatC(x, format = "fg", digits = 3)
+
+  tab %>%
+    mutate(
+      Predictor = ifelse(Term %in% names(pred_labels),
+                         unname(pred_labels[Term]), Term),
+      p = ifelse(p_value < 0.001, "<0.001", sprintf("%.3f", p_value)),
+      across(c(Estimate, Robust_SE, CI_low, CI_high), fmt)
+    ) %>%
+    select(Predictor, Estimate, `Robust SE` = Robust_SE,
+           `CI low` = CI_low, `CI high` = CI_high, p,
+           `Std. beta` = Std_Beta) %>%
+    knitr::kable(digits = 3, align = c("l", rep("r", 6)), caption = caption) %>%
+    kableExtra::kable_styling(full_width = FALSE)
+}
+
+coef_base <- robust_table(
+  model_ols,
+  sandwich::vcovCL(model_ols, cluster = model_data$State),
+  model_data
+)
+
+coef_state <- robust_table(
+  model_state,
+  sandwich::vcovHC(model_state, type = "HC3"),
+  model_data
+) %>%
+  filter(!startsWith(Term, "State"))
+
+show_coef(coef_base,
+          "Baseline OLS: coefficients with state-clustered robust standard errors")
+show_coef(coef_state,
+          "State fixed-effects model: predictor coefficients with HC3 robust standard errors (state indicators omitted)")
+
+coef_pred <- coef_base %>%
+  filter(Term %in% available_predictors) %>%
+  arrange(desc(abs(Std_Beta)))
+
+top_term   <- coef_pred$Term[1]
+top_beta   <- coef_pred$Std_Beta[1]
+top_label  <- tolower(unname(pred_labels[top_term]))
+n_pred     <- nrow(coef_pred)
+n_sig_base <- sum(coef_pred$p_value < 0.05)
+```
+
+Coefficients are interpreted as adjusted county-level associations: each is the estimated difference in obesity prevalence (percentage points) associated with a one-unit difference in the predictor, holding the other predictors constant. Units differ across predictors (median income is in dollars, population in persons, and sunlight in kJ/m²), so some raw coefficients are very small; the standardized coefficients are the better guide to relative strength.
+
+```{r leverage-check}
+leverage <- hatvalues(model_state)
+max_lev  <- max(leverage)
+
+high_leverage <- model_data %>%
+  mutate(Leverage = leverage) %>%
+  arrange(desc(Leverage)) %>%
+  slice_head(n = 8) %>%
+  left_join(
+    distinct(obesity_geo, State, County_key, County),
+    by = c("State", "County_key")
+  ) %>%
+  select(State, County, Leverage)
+
+top_lev_state <- as.character(high_leverage$State[1])
+
+knitr::kable(
+  high_leverage,
+  digits = 3,
+  caption = "Observations with the highest leverage in the state fixed-effects model"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+model_data %>%
+  count(State, name = "Counties") %>%
+  arrange(Counties) %>%
+  head(8) %>%
+  knitr::kable(caption = "States with the fewest counties in the regression sample") %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+Leverage is highest for a few very large counties and for states that contribute very few counties, because each state indicator is estimated from only those counties. The high-leverage small states are examined further in the sensitivity analysis below.
+
+##  Regression Diagnostics
+
+Regression diagnostics are used to evaluate whether the fitted models show important departures from the assumptions of linear regression. The analysis examines residual patterns, approximate normality, heteroscedasticity, and multicollinearity. Statistical significance should be interpreted cautiously because counties may not be statistically independent.
+
+```{r diagnostic-plots, fig.width=9, fig.height=8}
+old_par <- par(no.readonly = TRUE)
+par(mfrow = c(2, 2))
+plot(model_state)
+par(old_par)
+```
+
+```{r vif-diagnostics}
+get_vif <- function(model, label) {
+  v <- tryCatch(car::vif(model), error = function(e) NULL)
+  if (is.null(v)) return(NULL)
+  if (is.matrix(v)) {
+    # Adjusted GVIF, squared so it is comparable with an ordinary VIF
+    vals <- v[, "GVIF^(1/(2*Df))"]^2
+    nm <- rownames(v)
+  } else {
+    vals <- v
+    nm <- names(v)
+  }
+  tibble(Variable = nm, VIF = as.numeric(vals), Model = label)
+}
+
+vif_long <- bind_rows(
+  get_vif(model_ols, "Baseline OLS"),
+  get_vif(model_state, "State fixed effects")
+)
+
+vif_pred <- vif_long %>% filter(Variable %in% available_predictors)
+vif_max_row <- vif_pred %>% slice_max(VIF, n = 1, with_ties = FALSE)
+vif_max_val <- vif_max_row$VIF
+vif_max_var <- tolower(unname(pred_labels[vif_max_row$Variable]))
+vif_max_model <- vif_max_row$Model
+
+vif_long %>%
+  tidyr::pivot_wider(names_from = Model, values_from = VIF) %>%
+  knitr::kable(digits = 2, caption = "Variance inflation factors (adjusted for degrees of freedom)") %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+##  Residual Geographic Variation
+
+A residual is the difference between observed and model-predicted obesity prevalence:
+
+\[
+Residual_i = Observed_i - Predicted_i
+\]
+
+Positive residuals indicate that the observed county prevalence is higher than the model predicts. Negative residuals indicate that observed prevalence is lower than predicted. Residuals are examined to identify counties with larger deviations from the model.
+
+```{r residual-analysis}
+model_data <- model_data %>%
+  mutate(
+    fitted_obesity = fitted(model_state),
+    residual = residuals(model_state),
+    absolute_residual = abs(residual)
+  )
+
+residual_summary <- model_data %>%
+  summarise(
+    Mean_residual = mean(residual),
+    SD_residual = sd(residual),
+    Mean_absolute_residual = mean(absolute_residual),
+    Minimum_residual = min(residual),
+    Maximum_residual = max(residual)
+  )
+
+knitr::kable(
+  residual_summary,
+  digits = 3,
+  caption = "Summary of residuals from the state fixed-effects model"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+ggplot(model_data, aes(x = fitted_obesity, y = residual)) +
+  geom_point(alpha = 0.45) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Residuals Versus Fitted Values",
+    x = "Predicted adult obesity prevalence (%)",
+    y = "Residual (percentage points)"
+  ) +
+  theme_minimal()
+
+# Create a readable county-name lookup
+county_lookup <- obesity_geo %>%
+  distinct(State, County_key, County)
+
+# Display actual county names instead of normalized county keys
+largest_residuals <- model_data %>%
+  left_join(
+    county_lookup,
+    by = c("State", "County_key")
+  ) %>%
+  arrange(desc(absolute_residual)) %>%
+  select(
+    State,
+    County,
+    adult_obesity,
+    fitted_obesity,
+    residual
+  ) %>%
+  slice_head(n = 15)
+
+knitr::kable(
+  largest_residuals,
+  digits = 2,
+  caption = "Counties with the Largest Absolute Model Residuals"
+)
+```
+
+##  Geographic Variation by State
+
+To show where geographic differences remain after adjustment, the baseline model's residuals are averaged within each state. A positive state average means that counties in the state have higher obesity, on average, than the measured county characteristics predict.
+
+```{r state-residuals, fig.height=9}
+state_resid <- model_data %>%
+  mutate(base_resid = residuals(model_ols)) %>%
+  group_by(State) %>%
+  summarise(Counties = n(), Mean_residual = mean(base_resid), .groups = "drop") %>%
+  arrange(Mean_residual)
+
+state_low   <- as.character(state_resid$State[1])
+state_high  <- as.character(state_resid$State[nrow(state_resid)])
+resid_low   <- state_resid$Mean_residual[1]
+resid_high  <- state_resid$Mean_residual[nrow(state_resid)]
+sd_state_means <- sd(state_resid$Mean_residual)
+
+ggplot(state_resid,
+       aes(x = reorder(State, Mean_residual),
+           y = Mean_residual,
+           fill = Mean_residual > 0)) +
+  geom_col(show.legend = FALSE) +
+
+  # Display residual values on each bar
+  geom_text(
+    aes(label = sprintf("%.2f", Mean_residual)),
+    hjust = ifelse(state_resid$Mean_residual > 0, -0.15, 1.15),
+    size = 3,
+    color = "black"
+  ) +
+
+  coord_flip() +
+
+  labs(
+    title = "Average Baseline-Model Residual by State",
+    subtitle = "Positive values indicate higher obesity than predicted",
+    x = NULL,
+    y = "Mean residual (percentage points)"
+  ) +
+
+  scale_y_continuous(
+    expand = expansion(mult = c(0.12, 0.18))
+  ) +
+
+  theme_minimal(base_size = 10)
+```
+
+##  Sensitivity and Validation
+
+Four checks assess whether the main conclusions depend on specification choices or on a few influential observations: (1) log-transformed population and income, which are right-skewed; (2) dropping Delaware and Rhode Island, which have very few counties and high leverage; (3) dropping sunlight, which has the highest variance inflation factor in the state model; and (4) cross-validation. Cross-validation uses ten folds stratified by state, plus a leave-one-state-out check for the baseline model, which predicts each state from a model fit without it. These are checks of out-of-sample accuracy, which the in-sample R-squared and RMSE cannot provide. The F statistics in the sensitivity table are classical nested-model F-tests, so the primary-specification value differs slightly from the HC3-robust statistic reported above; both lead to the same conclusion.
+
+```{r sens-cv}
+fit_pair <- function(data, preds, label) {
+  d  <- data %>% mutate(State = droplevels(State))
+  m0 <- lm(reformulate(preds, response = "adult_obesity"), data = d)
+  m1 <- lm(reformulate(c(preds, "State"), response = "adult_obesity"), data = d)
+  a  <- anova(m0, m1)
+  tibble(
+    Specification  = label,
+    N              = nobs(m0),
+    Adj_R2_base    = summary(m0)$adj.r.squared,
+    Adj_R2_state   = summary(m1)$adj.r.squared,
+    RMSE_base      = sqrt(mean(residuals(m0)^2)),
+    RMSE_state     = sqrt(mean(residuals(m1)^2)),
+    F_state        = a$F[2],
+    p_state        = a$`Pr(>F)`[2]
+  )
+}
+
+sens_data <- model_data %>%
+  mutate(across(any_of(c("population", "median_income")), log,
+                .names = "log_{.col}"))
+
+preds_log <- dplyr::recode(
+  available_predictors,
+  population    = "log_population",
+  median_income = "log_median_income"
+)
+
+sens_table <- bind_rows(
+  fit_pair(model_data, available_predictors, "Primary specification"),
+  fit_pair(sens_data, preds_log, "Log population and log income"),
+  fit_pair(model_data %>% filter(!State %in% c("Delaware", "Rhode Island")),
+           available_predictors, "Excluding Delaware and Rhode Island"),
+  fit_pair(model_data, setdiff(available_predictors, "sunlight"),
+           "Excluding sunlight")
+)
+
+sens_table %>%
+  mutate(p_state = format.pval(p_state, digits = 3, eps = 0.001)) %>%
+  knitr::kable(
+    digits = 3,
+    col.names = c("Specification", "N", "Adj. R² (baseline)", "Adj. R² (state FE)",
+                  "RMSE (baseline)", "RMSE (state FE)", "F (state terms)", "p-value"),
+    caption = "Sensitivity of the baseline and state fixed-effects models"
+  ) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+
+# Cross-validation
+set.seed(698)
+cv_data <- model_data %>%
+  group_by(State) %>%
+  mutate(fold = sample(rep_len(1:10, n()))) %>%
+  ungroup()
+
+cv_rmse <- function(formula) {
+  pred <- rep(NA_real_, nrow(cv_data))
+  for (k in 1:10) {
+    test <- cv_data$fold == k
+    fit  <- lm(formula, data = cv_data[!test, ])
+    pred[test] <- predict(fit, newdata = cv_data[test, ])
+  }
+  sqrt(mean((cv_data$adult_obesity - pred)^2))
+}
+
+cv_base  <- cv_rmse(baseline_formula)
+cv_state <- cv_rmse(state_formula)
+
+loso_pred <- rep(NA_real_, nrow(cv_data))
+for (s in levels(cv_data$State)) {
+  idx <- cv_data$State == s
+  fit <- lm(baseline_formula, data = cv_data[!idx, ])
+  loso_pred[idx] <- predict(fit, newdata = cv_data[idx, ])
+}
+loso_base <- sqrt(mean((cv_data$adult_obesity - loso_pred)^2))
+
+cv_table <- tibble(
+  Validation = c("10-fold CV, baseline OLS",
+                 "10-fold CV, state fixed effects",
+                 "Leave-one-state-out, baseline OLS"),
+  Out_of_sample_RMSE = c(cv_base, cv_state, loso_base)
+)
+
+knitr::kable(
+  cv_table, digits = 3,
+  col.names = c("Validation approach", "Out-of-sample RMSE"),
+  caption = "Out-of-sample RMSE (percentage points)"
+) %>%
+  kableExtra::kable_styling(full_width = FALSE)
+```
+
+#  Results
+
+##  County-Level Variation in Adult Obesity
+
+The analysis sample contains **`r format(n_all, big.mark = ",")` counties** in `r n_states_all` jurisdictions`r ifelse(has_dc, " (including the District of Columbia)", "")`, each with an available outcome estimate`r ifelse(length(states_missing_analysis) > 0, paste0("; no usable records were found for ", knitr::combine_words(states_missing_analysis)), "")`. Mean county-level adult obesity prevalence is **`r sprintf("%.2f", mean_ob)`%** (SD = `r sprintf("%.2f", sd_ob)` percentage points), with a median of `r sprintf("%.2f", median(analysis_data$adult_obesity))`% and a range from `r sprintf("%.1f", min(analysis_data$adult_obesity))`% to `r sprintf("%.1f", max(analysis_data$adult_obesity))`%. The histogram shows that prevalence is distributed roughly symmetrically around the mean, so the spread across counties is large relative to the typical level: the lowest and highest county estimates differ by about `r sprintf("%.0f", max(analysis_data$adult_obesity) - min(analysis_data$adult_obesity))` percentage points. The state summary shows that mean county prevalence also differs by state, which motivates the geographic model.
+
+After excluding observations with missing values in the selected explanatory variables`r ifelse(has_dc, " and excluding the District of Columbia", "")`, the final regression sample consisted of **`r format(n_model, big.mark = ",")` counties across `r n_states_mod` states**`r ifelse(length(states_missing_model) > 0, paste0(" (no county in ", knitr::combine_words(states_missing_model), " had complete data)"), "")`.
+
+##  Regression Results
+
+The baseline OLS model used `r format(n_model, big.mark = ",")` counties with complete data in `r n_states_mod` states. It has an adjusted R-squared of **`r sprintf("%.3f", adj0)`** and an RMSE of **`r sprintf("%.2f", rmse0)`** percentage points, so the measured county characteristics together explain roughly `r sprintf("%.0f", 100 * adj0)`% of the variation in county obesity. With state-clustered robust standard errors, `r n_sig_base` of the `r n_pred` predictors have adjusted associations significant at the 5% level. The largest standardized association is with `r top_label` (standardized coefficient = `r sprintf("%.2f", top_beta)`, a `r ifelse(top_beta > 0, "positive", "negative")` association). The full coefficient tables are given above; coefficients should be read as adjusted associations, not causal effects.
+
+Adding state indicators raised the adjusted R-squared to **`r sprintf("%.3f", adj1)`** and reduced the RMSE to **`r sprintf("%.2f", rmse1)`** percentage points. The HC3-robust joint F-test shows that the state indicators jointly improve fit (F(`r f_df1`, `r f_df2`) = `r sprintf("%.2f", f_stat)`, p `r fmt_p(f_p)`). The improvement is substantial in practical terms as well as statistically: the RMSE falls by `r sprintf("%.2f", rmse0 - rmse1)` percentage points, and the state indicators account for `r sprintf("%.1f", 100 * resid_share)`% of the baseline model's residual variation.
+
+##  Geographic Differences After Adjustment
+
+Geographic differences between states remain after adjustment. Average baseline residuals by state range from `r sprintf("%.2f", resid_low)` percentage points (`r state_low`) to `r sprintf("%.2f", resid_high)` percentage points (`r state_high`), with a standard deviation of `r sprintf("%.2f", sd_state_means)` across state averages. Some states therefore have systematically higher or lower county obesity than their measured characteristics predict. The state fixed-effects model reduces the unexplained variation by accounting for systematic differences between states. However, substantial county-level residual variation remains after the state indicators and measured predictors are included. This indicates that state membership does not fully capture geographic differences in obesity prevalence. Additional analysis using county-level spatial methods would be needed to determine whether neighboring counties exhibit similar residual patterns.
+
+The counties with the largest residuals (table above) are a mixture of very large urban counties, such as several New York City boroughs, and small rural counties. Large negative residuals in dense urban counties may reflect unmeasured features of the built environment, such as walkability and transit use. These possibilities are not tested here.
+
+##  Model Diagnostics and Robustness
+
+The diagnostic plots indicate that the model is a reasonable approximation. Residuals are centered near zero with no strong pattern against fitted values. The Q-Q plot follows the reference line closely, with slightly heavier tails, mainly on the lower end. The scale-location plot shows mild curvature, suggesting modest heteroscedasticity, which is why robust standard errors are reported. No observation falls beyond the Cook's distance guide lines.
+
+Collinearity is concentrated in a few predictors. The largest variance inflation factor among the predictors is `r sprintf("%.1f", vif_max_val)` for `r vif_max_var` (`r tolower(vif_max_model)` model). `r ifelse(vif_max_val > 10, "This is above the common threshold of 10, so the individual coefficient of this variable should be interpreted cautiously, although collinearity does not bias overall fit or RMSE.", "This is below the common threshold of 10, so collinearity does not seriously limit the interpretation of the coefficients.")` The highest leverage in the state model is `r sprintf("%.2f", max_lev)` (in `r top_lev_state`), which is well below 1. High leverage occurs for a few very large counties and for counties in states with very few counties, as the leverage table shows.
+
+The conclusions are stable across the sensitivity checks. The adjusted R-squared of the state fixed-effects model ranges from `r sprintf("%.3f", min(sens_table$Adj_R2_state))` to `r sprintf("%.3f", max(sens_table$Adj_R2_state))` across specifications, and the state indicators `r ifelse(all(sens_table$p_state < 0.001), "remain jointly significant (p < 0.001) in every one", "do not reach p < 0.001 in every one")`. Out-of-sample, the ten-fold cross-validated RMSE is `r sprintf("%.2f", cv_base)` for the baseline model and `r sprintf("%.2f", cv_state)` for the state fixed-effects model. The leave-one-state-out RMSE for the baseline model is `r sprintf("%.2f", loso_base)`, which `r ifelse(loso_base > cv_base, "is larger than the ten-fold value, as expected when an entire state must be predicted without any of its own counties,", "is similar to the ten-fold value,")` but still well below the raw standard deviation of `r sprintf("%.2f", sd_ob)`.
+
+#  Discussion
+
+This study examined whether geographic differences in adult obesity prevalence across U.S. counties remain after accounting for measured behavioral, socioeconomic, food-related, and environmental characteristics. The analysis sample contained `r format(n_all, big.mark = ",")` counties, with a mean obesity prevalence of `r sprintf("%.2f", mean_ob)`% and a standard deviation of `r sprintf("%.2f", sd_ob)` percentage points.
+
+The baseline regression, which used `r length(available_predictors)` predictors and `r format(n_model, big.mark = ",")` counties with complete data, achieved an adjusted R-squared of `r sprintf("%.3f", adj0)` and an RMSE of `r sprintf("%.2f", rmse0)` percentage points. Measured county characteristics therefore account for most of the variation in county obesity. The strongest standardized association was with `r top_label`, which is consistent with the established link between physical activity and obesity. Because the physical-activity and obesity estimates come from the same IHME project, part of that association may reflect shared modeling inputs and not only independent measurement.
+
+Adding state fixed effects improved fit further: the adjusted R-squared increased from `r sprintf("%.3f", adj0)` to `r sprintf("%.3f", adj1)`, and the RMSE decreased from `r sprintf("%.2f", rmse0)` to `r sprintf("%.2f", rmse1)` percentage points (F(`r f_df1`, `r f_df2`) = `r sprintf("%.2f", f_stat)`, p `r fmt_p(f_p)`). This directly answers the primary research question. Geographic differences between states remain after controlling for the measured factors, and state membership explains an additional `r sprintf("%.1f", 100 * resid_share)`% of the residual variation. The finding held up in the sensitivity checks and is not driven by a few small, high-leverage states. Cross-validation indicates that the models' accuracy is not simply an artifact of in-sample fitting.
+
+At the same time, the state effects are only part of what remains unexplained. Most of the residual variation is between counties within the same state, so state boundaries do not capture all geographic structure. Residuals are likely to be correlated among neighboring counties, a possibility this analysis does not test. A spatial analysis, such as Moran's I on the residuals or a spatial error model, is a natural next step.
+
+The state effects should not be interpreted as effects of state policy or culture. They may reflect omitted state-level factors, regional differences in diet or the built environment, differences in how IHME's model borrowed information across counties, and the differences in the years covered by the source datasets. Because the data are observational and aggregated, the findings are statistical associations and cannot be applied to individuals without risking the ecological fallacy.
+
+Overall, the results show that geographic context carries information about county obesity beyond the measured risk factors. For practice, the largest unexplained state-level differences identify places where further investigation of local drivers would be most worthwhile.
+
+#  Limitations
+
+Several limitations should be considered when interpreting the findings.
+
+First, the study uses aggregated county-level data. County-level associations cannot automatically be generalized to individuals; doing so would risk an ecological fallacy.
+
+Second, the outcome is the arithmetic mean of male and female IHME 2009 obesity estimates. It is not a population-weighted overall prevalence estimate. In addition, IHME county values are model-based small-area estimates, not direct survey measurements. Smoothing across neighboring areas and shared model inputs, including for physical activity, may inflate explained variance and the apparent role of geography.
+
+Third, the source datasets represent different years. The outcome is from 2009, heavy drinking from 2012, and unemployment, population, and income are from later years (2019 for unemployment and population), while sunlight and environmental quality cover earlier periods. This timing mismatch, especially between the 2009 outcome and 2019 predictors, may weaken or distort the estimated relationships.
+
+Fourth, the analysis relies on state-plus-county name standardization for files without a consistently available FIPS identifier. A verified five-digit FIPS crosswalk would be preferable. State and national summary rows are removed by rule, which could occasionally drop a valid county record. The regression sample covers `r n_states_mod` states; `r paste0(ifelse(length(states_missing_model) > 0, paste0(knitr::combine_words(states_missing_model), " had no counties with complete data"), "every state is represented"), ifelse(has_dc, ", and the District of Columbia was excluded because it has a single observation", ""), ".")` The results should not be generalized to states that are missing.
+
+Fifth, the selected variables do not capture every factor associated with obesity. Potentially relevant omitted characteristics include healthcare access, transportation infrastructure, demographic composition, housing, local policy, and neighborhood-level resources.
+
+Sixth, state fixed effects capture average differences between states but do not test spatial autocorrelation among neighboring counties. The baseline OLS model uses state-clustered robust standard errors to account for potential dependence among counties within the same state. The state fixed-effects model uses HC3 heteroscedasticity-robust standard errors, which address heteroscedasticity but do not specifically account for within-state or cross-border spatial dependence. A separate spatial analysis using validated county geometries and a defensible spatial-weights matrix would be needed to examine these dependencies.
+
+Finally, OLS estimates may be sensitive to influential observations, multicollinearity, heteroscedasticity, and measurement error. Sunlight, which varies strongly with latitude and therefore with state, is the most collinear predictor in the state model. The sensitivity analyses address these concerns, but they cannot remove them.
+
+#  Conclusion
+
+This study examined county-level geographic differences in adult obesity prevalence after adjustment for measured behavioral, socioeconomic, food-related, and environmental characteristics, by comparing a baseline OLS regression with a model that adds state fixed effects.
+
+Measured county characteristics explained most of the variation in obesity (adjusted R-squared = `r sprintf("%.3f", adj0)`; RMSE = `r sprintf("%.2f", rmse0)` percentage points). Adding state indicators significantly improved fit (adjusted R-squared = `r sprintf("%.3f", adj1)`; RMSE = `r sprintf("%.2f", rmse1)`; p `r fmt_p(f_p)`) and accounted for `r sprintf("%.1f", 100 * resid_share)`% of the remaining residual variation, so geographic differences between states persist after adjustment. The strongest adjusted association was with `r top_label`. The result held across the sensitivity and cross-validation checks, and most of the remaining unexplained variation lies between counties within states.
+
+The findings are observational county-level associations. They help identify geographic patterns that warrant further public-health investigation, but they do not establish causal effects or explain all sources of obesity differences across communities. Future work should use a verified FIPS crosswalk, outcome and predictor data from matching years, population-weighted outcomes, and formal spatial models.
+
+# References
+
+Ahern, M., Brown, C., & Dukas, S. (2011). A national study of the association between food environments and county-level health outcomes. *The Journal of Rural Health, 27*(4), 367-379.
+https://doi.org/10.1111/j.1748-0361.2011.00378.x
+
+An, R., Li, X., & Jiang, N. (2017). Geographical variations in the environmental determinants of physical inactivity among U.S. adults. *International Journal of Environmental Research and Public Health, 14*(11), Article 1326. https://doi.org/10.3390/ijerph14111326
+
+Cameron, A. C., & Miller, D. L. (2015). A practitioner's guide to cluster-robust inference. *Journal of Human Resources, 50*(2), 317-372. https://doi.org/10.3368/jhr.50.2.317
+
+Centers for Disease Control and Prevention. (n.d.). *North America Land Data Assimilation System (NLDAS) daily sunlight (kJ/m²), 1979-2011*. https://wonder.cdc.gov/controller/datarequest/D80
+
+Dwyer-Lindgren, L., Freedman, G., Engell, R. E., Fleming, T. D., Lim, S. S., Murray, C. J. L., & Mokdad, A. H. (2013). Prevalence of physical activity and obesity in US counties, 2001-2011: A road map for action. *Population Health Metrics, 11*, Article 7.
+https://doi.org/10.1186/1478-7954-11-7
+
+Feeding America. (n.d.). *Map the Meal Gap: County-level food insecurity data*. https://www.feedingamerica.org/research/map-the-meal-gap/by-county
+
+Hales, C. M., Carroll, M. D., Fryar, C. D., & Ogden, C. L. (2020). *Prevalence of obesity and severe obesity among adults: United States, 2017-2018* (NCHS Data Brief No. 360). National Center for Health Statistics. https://www.cdc.gov/nchs/products/databriefs/db360.htm
+
+Institute for Health Metrics and Evaluation. (n.d.-a). *United States alcohol use prevalence by county, 2002-2012*. Global Health Data Exchange. http://ghdx.healthdata.org/record/ihme-data/united-states-alcohol-use-prevalence-county-2002-2012
+
+Institute for Health Metrics and Evaluation. (n.d.-b). *United States physical activity and obesity prevalence by county*. Global Health Data Exchange. https://ghdx.healthdata.org/
+
+Janlert, U., Winefield, A. H., & Hammarström, A. (2015). Length of unemployment and health-related outcomes: A life-course analysis. *European Journal of Public Health, 25*(4), 662-667. https://doi.org/10.1093/eurpub/cku186
+
+MacKinnon, J. G., & White, H. (1985). Some heteroskedasticity-consistent covariance matrix estimators with improved finite sample properties. *Journal of Econometrics, 29*(3), 305-325. https://doi.org/10.1016/0304-4076(85)90158-7
+
+U.S. Census Bureau. (2019). *Small Area Income and Poverty Estimates (SAIPE): State and county estimates*. https://www.census.gov/data/datasets/2019/demo/saipe/2019-state-and-county.html
+
+U.S. Department of Agriculture, Economic Research Service. (n.d.). *County-level data sets*. https://www.ers.usda.gov/data-products/county-level-data-sets/download-data/
+
+U.S. Environmental Protection Agency. (n.d.). *Environmental Quality Index (EQI), 2006-2010*. https://edg.epa.gov/EPADataCommons/public/ORD/CPHEA/EQI_2006_2010/
+
+Wacker, M., & Holick, M. F. (2013). Sunlight and vitamin D: A global perspective for health. *Dermato-Endocrinology, 5*(1), 51-108. https://doi.org/10.4161/derm.24494
+
+Zeileis, A. (2004). Econometric computing with HC and HAC covariance matrix estimators. *Journal of Statistical Software, 11*(10), 1-17. https://doi.org/10.18637/jss.v011.i10
